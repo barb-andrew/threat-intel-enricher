@@ -1,32 +1,29 @@
 # Threat Intel Enricher
 
-A clean, practical Python CLI tool for automated threat intelligence enrichment with local persistence and custom tagging.
+A practical Python CLI tool for automated threat intelligence enrichment, local persistence, and custom tagging.
 
 ## Project Summary
 
-I built a Python CLI tool that takes IP addresses, enriches them using public APIs (AbuseIPDB + ip-api.com), and stores the results locally in SQLite. The tool supports custom tagging, force-refreshing data, querying/filtering, batch processing from files, and exporting results to JSON or CSV.
+I built a Python CLI tool that enriches IP addresses using public APIs (AbuseIPDB + ip-api.com), stores results in SQLite, and supports custom tagging so context persists even when infrastructure changes. It includes batch processing from files, exporting to JSON/CSV, and clean terminal output.
 
-The goal was to reduce manual research time while building persistent, queryable profiles on indicators — similar to how real threat intelligence platforms maintain context on IPs even when they rotate. This type of work directly aligns with IP intelligence, proxy/VPN detection, and historical tracking done at Digital Envoy / Digital Element.
+This type of work (IP intelligence, proxy/VPN context, persistent profiling) directly aligns with what Digital Envoy / Digital Element does.
 
 ## Features
-
-- Enrich single IPs with geolocation, ASN/ISP, abuse score, and usage type
-- Custom tagging system (e.g. “Residential Proxy”, “Known VPN”, “Suspicious”)
-- Local SQLite database with caching
-- `--force` flag to bypass cache and re-query APIs
+- Single IP enrichment with geolocation, ASN/ISP, abuse score, and usage type
+- Custom tagging system
+- Local caching with SQLite
+- `--force` flag to refresh data
 - Query and filter by IP or tag
 - Batch processing from a text file
 - Export to JSON or CSV
-- Clean, colored terminal output using Rich
+- Clean, colored output using Rich
 
-## Installation
+## Installation & Usage
 
-```bash
-git clone <your-repo-url>
+```powershell
+git clone https://github.com/barb-andrew/threat-intel-enricher.git
 cd threat-intel-enricher
 
 python -m venv .venv
-.venv\Scripts\activate          # Windows
-# source .venv/bin/activate     # Mac/Linux
-
+.venv\Scripts\activate
 pip install -r requirements.txt

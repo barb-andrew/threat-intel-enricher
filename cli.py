@@ -41,12 +41,20 @@ def get_db_connection():
 
 def enrich_with_abuseipdb(ip):
     if not ABUSEIPDB_KEY:
-        return None, "No AbuseIPDB API key found in .env"
+        console.print("[red]Error:[/red] No AbuseIPDB API key found in .env file.")
+        return None, None
+
     url = "https://api.abuseipdb.com/api/v2/check"
     params = {"ipAddress": ip, "maxAgeInDays": 90}
     headers = {"Key": ABUSEIPDB_KEY, "Accept": "application/json"}
+
     try:
         resp = requests.get(url, params=params, headers=headers, timeout=10)
+
+        if resp.status_code == 429:
+            console.print("[yellow]Rate limit hit on AbuseIPDB.[/yellow] Try again later or reduce requests.")
+            return None, None
+
         resp.raise_for_status()
         data = resp.json().get("data", {})
         return {
@@ -56,8 +64,13 @@ def enrich_with_abuseipdb(ip):
             "isp": data.get("isp"),
             "details": json.dumps(data)
         }, None
-    except Exception as e:
-        return None, str(e)
+
+    except requests.exceptions.Timeout:
+        console.print("[red]Error:[/red] Request to AbuseIPDB timed out.")
+        return None, None
+    except requests.exceptions.RequestException as e:
+        console.print(f"[red]Error:[/red] Failed to reach AbuseIPDB → {e}")
+        return None, None
 
 def enrich_with_ipapi(ip):
     try:
@@ -134,17 +147,17 @@ def check_ip(ip, tags=None, force=False):
         print_enrichment(existing)
         return
 
-    console.print(f"[cyan][ENRICH][/cyan] Querying APIs for {ip}...")
-    abuse_data, err = enrich_with_abuseipdb(ip)
-    if err:
-        console.print(f"[red]AbuseIPDB error:[/red] {err}")
-        abuse_data = {}
+    with console.status(f"[cyan]Querying APIs for {ip}...[/cyan]", spinner="dots"):
+        abuse_data, err = enrich_with_abuseipdb(ip)
+        if err:
+            console.print(f"[red]AbuseIPDB error:[/red] {err}")
+            abuse_data = {}
 
-    geo_data = enrich_with_ipapi(ip) or {}
-    combined = {**abuse_data, **geo_data}
+        geo_data = enrich_with_ipapi(ip) or {}
+        combined = {**abuse_data, **geo_data}
 
     if not combined:
-        console.print("[red]No enrichment data retrieved.[/red]")
+        console.print("[red]Failed to enrich IP. No data returned from APIs.[/red]")
         return
 
     save_or_update_enrichment(ip, combined, tags)
@@ -224,26 +237,56 @@ def export_data(format_type="json", output_file=None, tag=None):
                 writer.writerows(data)
             console.print(f"[green]Exported {len(data)} records to {output_file}[/green]")
 
+def show_stats():
+    init_db()
+    conn = get_db_connection()
+
+    total = conn.execute("SELECT COUNT(*) FROM enrichments").fetchone()[0]
+    tagged = conn.execute("SELECT COUNT(*) FROM enrichments WHERE tags IS NOT NULL AND tags != '[]'").fetchone()[0]
+
+    console.print(Panel.fit(
+        f"[bold]Total Records:[/bold] {total}\n"
+        f"[bold]Tagged Records:[/bold] {tagged}",
+        title="Threat Intel Stats",
+        border_style="blue"
+    ))
+
+    conn.close()
+
 def batch_process(file_path, tags=None, force=False):
     if not os.path.exists(file_path):
         console.print(f"[red]File not found: {file_path}[/red]")
         return
 
     try:
-        with open(file_path, "r", encoding="utf-8-sig") as f:   # utf-8-sig handles BOM
+        with open(file_path, "r", encoding="utf-8-sig") as f:
             ips = [line.strip() for line in f if line.strip()]
     except UnicodeDecodeError:
-        console.print("[red]Encoding error reading the file. Try saving ips.txt as UTF-8 in VS Code.[/red]")
+        console.print("[red]Encoding error. Save the file as UTF-8.[/red]")
         return
 
     if not ips:
-        console.print("[yellow]No valid IPs found in the file.[/yellow]")
+        console.print("[yellow]No valid IPs found in file.[/yellow]")
         return
 
-    console.print(f"[cyan]Processing {len(ips)} IPs from {file_path}...[/cyan]")
+    console.print(f"[cyan]Found {len(ips)} IPs in file.[/cyan]")
 
-    for ip in track(ips, description="Enriching IPs..."):
+    processed = 0
+    skipped = 0
+
+    for ip in track(ips, description="Processing IPs..."):
+        conn = get_db_connection()
+        existing = conn.execute("SELECT 1 FROM enrichments WHERE ioc_value = ?", (ip,)).fetchone()
+        conn.close()
+
+        if existing and not force:
+            skipped += 1
+            continue
+
         check_ip(ip, tags=tags, force=force)
+        processed += 1
+
+    console.print(f"\n[green]Done.[/green] Processed: {processed} | Skipped (already existed): {skipped}")
 
 def main():
     parser = argparse.ArgumentParser(description="Threat Intel Enricher CLI")
@@ -272,6 +315,8 @@ def main():
     batch_parser.add_argument("--tag", action="append", help="Add tag(s) to all IPs")
     batch_parser.add_argument("--force", action="store_true", help="Force fresh API queries")
 
+    stats_parser = subparsers.add_parser("stats", help="Show enrichment statistics")
+
     list_parser = subparsers.add_parser("list", help="List recent enrichments")
 
     args = parser.parse_args()
@@ -286,6 +331,8 @@ def main():
         export_data(args.format, args.output, args.tag)
     elif args.command == "batch":
         batch_process(args.file, args.tag, args.force)
+    elif args.command == "stats":
+        show_stats()
     elif args.command == "list":
         query_ioc()
     else:
